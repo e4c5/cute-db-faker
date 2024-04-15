@@ -2,7 +2,7 @@ import sys
 import networkx as nx
 
 from PySide6.QtWidgets import QApplication, QWidget, QMainWindow, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem
-from PySide6.QtWidgets import QScrollArea, QSizePolicy
+from PySide6.QtWidgets import QScrollArea, QSizePolicy, QSplitter
 from PySide6.QtSql import QSqlDatabase, QSqlQuery
 
 from PySide6.QtWidgets import QLabel
@@ -13,36 +13,55 @@ class DatabaseTables(QMainWindow):
     def __init__(self, parent=None):
         super(DatabaseTables, self).__init__(parent)
         
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        self.central_widget = QSplitter()
+        self.central_widget.setSizes([100, 400])
+        self.setCentralWidget(self.central_widget)
 
-        # Create a layout for the central widget
-        self.layout = QHBoxLayout(central_widget)
+        # we are going to create two graphs, the first graph will contain all the 
+        # foreign keys and the second graph will not contain self referential keys
+        # that is needed because topological sort works only on Directed Acyclic Graphs
+        # graphs with self referential keys are not DAGs
 
         self.g = nx.DiGraph()
+        self.dag = nx.DiGraph()
 
         db = QSqlDatabase.addDatabase("QPSQL")
         db.setHostName("localhost")
-        db.setDatabaseName("pairing")
-        db.setUserName("")
-        db.setPassword("")
+        db.setDatabaseName("ph_pharmacy")
+        db.setUserName("postgres")
+        db.setPassword("bada123")
         ok = db.open()
         self.db = db
 
         if ok:
             self.find_nodes()    
             self.build_relations()
-            self.display_graph()
+            try:
+
+                self.g = nx.DiGraph()
+                for cycle in nx.simple_cycles(self.dag):
+                    # Convert the cycle to a list of edges
+                    edges = [(cycle[i], cycle[i + 1]) for i in range(len(cycle) - 1)]
+                    # Add the last edge to close the cycle
+                    edges.append((cycle[-1], cycle[0]))
+                    # Add the edges to the graph
+                    self.g.add_edges_from(edges)
+                
+            except nx.exception.NetworkXNoCycle:
+                print("No cycles found in the graph")
+            self.display_graph(self.g)
+
+            
         else:
             print("Failed to connect to database")
             sys.exit(1)
 
 
-    def display_graph(self):
-        A = nx.nx_agraph.to_agraph(self.g)
+    def display_graph(self, graph):
+        a = nx.nx_agraph.to_agraph(graph)
 
-        A.layout(prog='dot')  # Use the 'dot' layout engine
-        A.draw('graph.png')
+        a.layout(prog='sfdp')  # Use the 'dot' layout engine
+        a.draw('graph.png')
 
         label = QLabel()
         pixmap = QPixmap('graph.png')
@@ -50,10 +69,12 @@ class DatabaseTables(QMainWindow):
         scroll_area = QScrollArea()
         scroll_area.setWidget(label)
         
-        self.layout.addWidget(scroll_area)
+        self.central_widget.addWidget(scroll_area)
 
     def build_relations(self):
         """Iterate through the nodes in the digraph in self.g and build the relations between them"""
+
+        query = QSqlQuery()
 
         q = '''SELECT 
                 kcu.column_name, 
@@ -73,7 +94,7 @@ class DatabaseTables(QMainWindow):
                 tc.table_name='{}' AND 
                 tc.constraint_type = 'FOREIGN KEY';'''
         
-        query = QSqlQuery()
+        
         tables = []
         for node in self.g.nodes:
             tables.append(node)
@@ -82,26 +103,31 @@ class DatabaseTables(QMainWindow):
             query.exec(q.format(node))
             while query.next():  # Add this line
                 record = query.record()
-                #print(node , record.value('column_name'), " -> ", record.value('foreign_table_name'), ".", record.value('foreign_column_name'))
                 self.g.add_edge(node, record.value('foreign_table_name'))
+                if node != record.value('foreign_table_name'):
+                    self.dag.add_edge(node, record.value('foreign_table_name'))
+
+#        for node in nx.topological_sort(self.dag):
+#            print(node)
+
 
     def find_nodes(self):
-        
-        self.setLayout(self.layout)
-
+        """Find all the tables in the database and add them to the graph"""
         query = QSqlQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
         table = QTableWidget()
         table.setColumnCount(1)
         table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding) 
         table.setHorizontalHeaderLabels(["List of Tables"])
         row = 0
+
         while query.next():
             if not (query.value(0).endswith('_aud') or query.value(0).endswith('_audit')):
                 table.setRowCount(row + 1)
                 table.setItem(row, 0, QTableWidgetItem(query.value(0)))
                 self.g.add_node(query.value(0))
+                self.dag.add_node(query.value(0))
                 row += 1
-        self.layout.addWidget(table)
+        self.central_widget.addWidget(table)
         
                             
 if __name__ == '__main__':
