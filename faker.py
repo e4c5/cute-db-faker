@@ -1,12 +1,58 @@
 import sys
 import networkx as nx
 
-from PySide6.QtWidgets import QApplication, QWidget, QMainWindow, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem
-from PySide6.QtWidgets import QScrollArea, QSizePolicy, QSplitter
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QLineEdit, QVBoxLayout, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import QScrollArea, QSizePolicy, QSplitter, QPushButton, QMessageBox
 from PySide6.QtSql import QSqlDatabase, QSqlQuery
 
 from PySide6.QtWidgets import QLabel
 from PySide6.QtGui import QPixmap
+
+class DatabaseDialog(QDialog):
+    def __init__(self, parent=None):
+        super(DatabaseDialog, self).__init__(parent)
+
+        self.layout = QVBoxLayout(self)
+
+        self.host_label = QLabel("Host:")
+        self.host_field = QLineEdit()
+        self.layout.addWidget(self.host_label)
+        self.layout.addWidget(self.host_field)
+
+        self.database_label = QLabel("Database:")
+        self.database_field = QLineEdit()
+        self.layout.addWidget(self.database_label)
+        self.layout.addWidget(self.database_field)
+
+        self.username_label = QLabel("Username:")
+        self.username_field = QLineEdit()
+        self.layout.addWidget(self.username_label)
+        self.layout.addWidget(self.username_field)
+
+        self.password_label = QLabel("Password:")
+        self.password_field = QLineEdit()
+        self.password_field.setEchoMode(QLineEdit.Password)
+        self.layout.addWidget(self.password_label)
+        self.layout.addWidget(self.password_field)
+
+        self.button = QPushButton("Connect")
+        self.button.clicked.connect(self.connect_to_database)
+        self.layout.addWidget(self.button)
+
+    def connect_to_database(self):
+        db = QSqlDatabase.addDatabase("QPSQL")
+        db.setHostName(self.host_field.text())
+        db.setDatabaseName(self.database_field.text())
+        db.setUserName(self.username_field.text())
+        db.setPassword(self.password_field.text())
+        ok = db.open()
+
+        if ok:
+            self.db = db
+            self.accept()
+        else:
+            QMessageBox.critical(self, "Error", "Could not connect to the database")
+
 
 class DatabaseTables(QMainWindow):
 
@@ -25,36 +71,23 @@ class DatabaseTables(QMainWindow):
         self.g = nx.DiGraph()
         self.dag = nx.DiGraph()
 
-        db = QSqlDatabase.addDatabase("QPSQL")
-        db.setHostName("localhost")
-        db.setDatabaseName("ph_pharmacy")
-        db.setUserName("postgres")
-        db.setPassword("bada123")
-        ok = db.open()
-        self.db = db
+        self.find_nodes()    
+        self.build_relations()
+        try:
 
-        if ok:
-            self.find_nodes()    
-            self.build_relations()
-            try:
-
-                self.g = nx.DiGraph()
-                for cycle in nx.simple_cycles(self.dag):
-                    # Convert the cycle to a list of edges
-                    edges = [(cycle[i], cycle[i + 1]) for i in range(len(cycle) - 1)]
-                    # Add the last edge to close the cycle
-                    edges.append((cycle[-1], cycle[0]))
-                    # Add the edges to the graph
-                    self.g.add_edges_from(edges)
-                
-            except nx.exception.NetworkXNoCycle:
-                print("No cycles found in the graph")
-            self.display_graph(self.g)
-
+            self.g = nx.DiGraph()
+            for cycle in nx.simple_cycles(self.dag):
+                # Convert the cycle to a list of edges
+                edges = [(cycle[i], cycle[i + 1]) for i in range(len(cycle) - 1)]
+                # Add the last edge to close the cycle
+                edges.append((cycle[-1], cycle[0]))
+                # Add the edges to the graph
+                self.g.add_edges_from(edges)
             
-        else:
-            print("Failed to connect to database")
-            sys.exit(1)
+        except nx.exception.NetworkXNoCycle:
+            print("No cycles found in the graph")
+        self.display_graph(self.g)
+
 
 
     def display_graph(self, graph):
@@ -132,6 +165,15 @@ class DatabaseTables(QMainWindow):
                             
 if __name__ == '__main__':
     app = QApplication([])
-    window = DatabaseTables()
-    window.show()
-    app.exec()
+    dialog = DatabaseDialog()
+
+    if dialog.exec_() == QDialog.Accepted:
+        window = DatabaseTables()
+        window.db = dialog.db
+        window.show()
+        app.exec()
+        pass
+    else:
+        # Quit the application
+        app.quit()
+        
